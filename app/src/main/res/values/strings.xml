@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">MineSweeper</string>
+    <string name="easy">Easy</string>
+    <string name="medium">Medium</string>
+    <string name="hard">Hard</string>
+    <string name="down">D</string>
+    <string name="right">R</string>
+    <string name="top">T</string>
+    <string name="left">L</string>
+    <string name="game_finished">Game Over!</string>
+    <string name="u_win">You Won</string>
+    <string name="u_loose">You Lose</string>
+    <string name="try_again">continue</string>
+    <string name="congratulations">congratulations!</string>
+    <string name="exit_game">Exit Game</string>
+</resources>

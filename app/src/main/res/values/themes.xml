@@ -1,0 +1,16 @@
+<resources>
+    <!-- Base application theme. -->
+    <style name="MsThem.App" parent="Theme.AppCompat.NoActionBar">
+        <!-- Status bar color. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="Theme.AppCompat.Light.NoActionBar.FullScreen" parent="@style/Theme.AppCompat.Light.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+    </style>
+
+    <style name="Theme.MineSweeper.AppBarOverlay" parent="ThemeOverlay.AppCompat.Dark.ActionBar" />
+
+    <style name="Theme.MineSweeper.PopupOverlay" parent="ThemeOverlay.AppCompat.Light" />
+</resources>

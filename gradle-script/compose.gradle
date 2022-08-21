@@ -1,0 +1,71 @@
+apply from: rootProject.file('gradle-script/dependencies.gradle')
+apply plugin: 'kotlin-android'
+android {
+
+    compileSdkVersion versions.compileSdk
+    buildToolsVersion versions.buildTools
+
+    defaultConfig {
+        minSdk versions.minSdk
+        targetSdk versions.targetSdk
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildFeatures {
+        compose true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+
+    composeOptions {
+        kotlinCompilerVersion versions.kotlin
+        kotlinCompilerExtensionVersion versions.compose
+    }
+    kotlinOptions {
+        useIR = true
+        useOldBackend = false
+    }
+}
+
+
+dependencies {
+    implementation libs.composeActivity
+    implementation libs.composeAnimation
+    implementation libs.composeCompiler
+    implementation libs.composeFoundation
+    implementation libs.composeMaterial
+    implementation libs.composeRuntime
+    implementation libs.composeLivedata
+    implementation libs.composeUi
+    implementation libs.composeUi
+    implementation libs.composeUiTooling
+    implementation libs.composeNavigation
+    implementation libs.accompanistInsetUI
+    implementation libs.accompanistNavigationMaterial
+    implementation libs.accompanistNavigationAnimation
+    implementation libs.accompanistPermissions
+    implementation libs.koinCompose
+    implementation libs.composeLifecycle
+    implementation libs.composeGlide
+    implementation libs.coreKtx
+    implementation libs.accompanistSystemUiController
+    implementation libs.coilCore
+    implementation libs.coilCompose
+    implementation libs.liveDataKtx
+    implementation libs.horizontalPager
+    implementation libs.revealswipe
+
+}
+repositories {
+    google()
+    mavenCentral()
+    maven { url 'https://jitpack.io' }
+}

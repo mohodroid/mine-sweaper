@@ -1,0 +1,13 @@
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+apply from: rootProject.file('gradle-script/dependencies.gradle')
+apply from: rootProject.file('gradle-script/compose.gradle')
+
+
+dependencies {
+
+    implementation project(":core-compose")
+    implementation libs.appcompatV7
+    implementation project(path: ':core-game')
+    implementation libs.gson
+}
