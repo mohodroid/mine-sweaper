@@ -1,10 +1,10 @@
 package com.mohdroid.minesweeper.main.repository
 
-import com.mohdroid.algorithm.dto.LevelDetailResponse
+import com.mohdroid.game.domain.LevelDefinition
 import com.mohdroid.minesweeper.main.DifficultyLevel
 
 interface GameRepository {
 
-    suspend fun getGameLevel(difficultyLevel: DifficultyLevel) : LevelDetailResponse?
+    suspend fun loadLevel(difficultyLevel: DifficultyLevel): Result<LevelDefinition>
 
 }

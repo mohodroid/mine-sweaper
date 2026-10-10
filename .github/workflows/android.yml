@@ -1,0 +1,21 @@
+name: Android checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+      - uses: android-actions/setup-android@v3
+      - name: Install compile SDK
+        run: sdkmanager "platforms;android-31" "build-tools;30.0.2"
+      - name: Verify
+        run: ./gradlew :core-game:test :app:lintDebug

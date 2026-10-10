@@ -1,7 +1,11 @@
 package com.mohdroid.minesweeper.main.repository
 
 import com.google.gson.Gson
-import com.mohdroid.algorithm.dto.LevelDetailResponse
+import com.mohdroid.game.domain.BoardSize
+import com.mohdroid.game.domain.LevelAsset
+import com.mohdroid.game.domain.LevelDefinition
+import com.mohdroid.game.domain.Position
+import com.mohdroid.game.domain.TileKind
 import com.mohdroid.minesweeper.ConfigManager
 import com.mohdroid.minesweeper.framework.CoroutineDispatcherProvider
 import com.mohdroid.minesweeper.framework.CoroutineDispatcherProviderImpl
@@ -30,14 +34,27 @@ class SimpleGameRepository(
         }
     }
 
-    override suspend fun getGameLevel(difficultyLevel: DifficultyLevel) =
+    override suspend fun loadLevel(difficultyLevel: DifficultyLevel): Result<LevelDefinition> =
         getBoard(difficultyLevel)
 
 
-    private suspend fun getBoard(difficultyLevel: DifficultyLevel) =
+    private suspend fun getBoard(difficultyLevel: DifficultyLevel): Result<LevelDefinition> =
         withContext(dispatcherProvider.ioDispatcher()) {
-            configManager.getJson(getPath(difficultyLevel))?.let {
-                Gson().fromJson(it, LevelDetailResponse::class.java)
+            configManager.readText(getPath(difficultyLevel)).mapCatching { json ->
+                val response = Gson().fromJson(json, LevelJsonDto::class.java)
+                    ?: error("Level file is empty or malformed.")
+                response.toDomain().also { it.validate() }
             }
         }
+
+    private fun LevelJsonDto.toDomain(): LevelDefinition = LevelDefinition(
+        size = BoardSize(rows, cols),
+        assets = assetDetails.orEmpty().map { it.toDomain() }
+    )
+
+    private fun AssetJsonDto.toDomain(): LevelAsset = LevelAsset(
+        tile = TileKind.valueOf(type),
+        count = count,
+        positions = positions.orEmpty().map { Position(it.x, it.y) }
+    )
 }

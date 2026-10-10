@@ -3,6 +3,7 @@ package com.mohdroid.minesweeper.main.screen
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Card
+import androidx.compose.material.Button
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -19,14 +20,14 @@ import com.mohdroid.compose.theme.semiBoldRed32
 import com.mohdroid.minesweeper.R
 import com.mohdroid.minesweeper.main.compose.MsBtnExit
 import com.mohdroid.minesweeper.main.compose.MsBtnTryAgain
-import com.mohdroid.minesweeper.main.viewmodel.FinishGame
 
 @Composable
 fun FinishGameDialog(
     modifier: Modifier = Modifier,
-    finishGame: FinishGame,
+    isWin: Boolean,
     onTryAgainClick: () -> Unit,
-    onExitClocked: () -> Unit
+    onExitClocked: () -> Unit,
+    onReviewClick: () -> Unit
 ) {
     Dialog(onDismissRequest = { }) {
         Card(
@@ -35,10 +36,10 @@ fun FinishGameDialog(
         ) {
             Column(modifier.padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Space(size = 24.dp)
-                TextHeader(finishGame = finishGame)
+                TextHeader(isWin = isWin)
                 Space(size = 12.dp)
                 Text(
-                    text = if (finishGame.isWin)
+                    text = if (isWin)
                         stringResource(id = R.string.u_win)
                     else stringResource(id = R.string.u_loose),
                     style = MsTypography.mediumBlack20
@@ -51,7 +52,7 @@ fun FinishGameDialog(
                     MsBtnExit(
                         modifier = Modifier
                             .weight(1f)
-                            .height(35.dp)
+                            .height(48.dp)
                     ) {
                         onExitClocked()
                     }
@@ -59,12 +60,14 @@ fun FinishGameDialog(
                     MsBtnTryAgain(
                         Modifier
                             .weight(1f)
-                            .height(35.dp)
+                            .height(48.dp)
                     ) {
                         onTryAgainClick()
                     }
 
                 }
+                Space(size = 12.dp)
+                Button(onClick = onReviewClick) { Text("Review board") }
                 Space(size = 24.dp)
             }
         }
@@ -72,13 +75,13 @@ fun FinishGameDialog(
 }
 
 @Composable
-fun TextHeader(modifier: Modifier = Modifier, finishGame: FinishGame) {
+fun TextHeader(modifier: Modifier = Modifier, isWin: Boolean) {
     val textHeader =
-        if (finishGame.isWin) stringResource(id = R.string.congratulations) else stringResource(
+        if (isWin) stringResource(id = R.string.congratulations) else stringResource(
             id = R.string.game_finished
         )
     val textStyle =
-        if (finishGame.isWin) MsTypography.semiBoldRed32.copy(color = green)
+        if (isWin) MsTypography.semiBoldRed32.copy(color = green)
         else MsTypography.semiBoldRed32
 
     Text(

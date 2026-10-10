@@ -1,110 +1,108 @@
 package com.mohdroid.minesweeper.main.viewmodel
 
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.mohdroid.algorithm.DirectionalOfMovement
-import com.mohdroid.algorithm.MineSweeper
-import com.mohdroid.algorithm.MissionCoordinator
-import com.mohdroid.algorithm.MissionCoordinator.PlayerState.*
-import com.mohdroid.minesweeper.framework.*
-import com.mohdroid.minesweeper.main.DifficultyLevel
+import com.mohdroid.game.domain.DifficultyLevel
+import com.mohdroid.game.domain.Direction
+import com.mohdroid.game.domain.GamePhase
+import com.mohdroid.game.domain.GameSession
+import com.mohdroid.game.domain.GameSnapshot
+import com.mohdroid.game.domain.FlagKind
+import com.mohdroid.game.domain.Position
 import com.mohdroid.minesweeper.main.repository.GameRepository
-import com.mohdroid.minesweeper.main.toList
-import com.mohdroid.minesweeper.main.viewmodel.MainViewModel.State
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.concurrent.CancellationException
 
+enum class GameLoadState { IDLE, LOADING, READY, ERROR }
 
-data class FinishGame(
-    val isFinished: Boolean = false,
-    val isWin: Boolean = false
-)
+data class GameUiState(
+    val loadState: GameLoadState = GameLoadState.IDLE,
+    val difficulty: DifficultyLevel? = null,
+    val game: GameSnapshot? = null,
+    val errorMessage: String? = null
+) {
+    val canMove: Boolean get() = loadState == GameLoadState.READY && game?.phase == GamePhase.PLAYING
+    val isFinished: Boolean get() = game?.phase == GamePhase.WON || game?.phase == GamePhase.LOST
+}
 
 class MainViewModel(
     private val gameRepository: GameRepository
-) : DiscountopiaStatefulViewModel<State>(State()) {
+) : ViewModel() {
 
-    data class State(
-        val boardGame: LoadableData<List<List<MineSweeper.Node>>> = NotLoaded,
-        val columns: Int = 0,
-        val rows: Int = 0,
-        val gameState: MissionCoordinator.PlayerState = CONTINUE,
-        val numberOfMovement: Int = 0,
-        val numberOfFoundKeys: Int = 0,
-        val totalNumberOfKeys: Int = 0,
-        val numberOfMines: Int = 0
-    )
+    private val _uiState = MutableStateFlow(GameUiState())
+    val uiState: StateFlow<GameUiState> = _uiState.asStateFlow()
 
-    sealed class Event {
-        data class ShowFinishGameDialog(val finishGame: FinishGame = FinishGame()) : Event()
-    }
-
-    private val eventChannel = Channel<Event>(Channel.BUFFERED)
-    val eventsFlow = eventChannel.receiveAsFlow()
-
-    private lateinit var mc: MissionCoordinator
-    private lateinit var level: DifficultyLevel
+    private var session: GameSession? = null
+    private var loadJob: Job? = null
 
     fun onLevel(level: DifficultyLevel) {
-        this.level = level
-        applyState { copy(boardGame = Loading) }
-        viewModelScope.launch {
-            val gameLevel = gameRepository.getGameLevel(level)
-            mc = MissionCoordinator(gameLevel)
-            startGame(mc)
+        loadJob?.cancel()
+        session = null
+        _uiState.value = GameUiState(loadState = GameLoadState.LOADING, difficulty = level)
+        loadJob = viewModelScope.launch {
+            val levelResult = gameRepository.loadLevel(level)
+            if (!isActive) return@launch
+            if (levelResult.isFailure) {
+                showError(levelResult.exceptionOrNull() ?: IllegalStateException("Unable to load level."))
+                return@launch
+            }
+
+            val createdSession = try {
+                withContext(Dispatchers.Default) {
+                    GameSession.create(levelResult.getOrThrow()).getOrThrow()
+                }
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                showError(exception)
+                return@launch
+            }
+            if (!isActive) return@launch
+            session = createdSession
+            _uiState.value = GameUiState(
+                loadState = GameLoadState.READY,
+                difficulty = level,
+                game = createdSession.snapshot()
+            )
         }
     }
 
-    private fun startGame(mc: MissionCoordinator) {
-        applyState {
-            copy(
-                boardGame = Loaded(mc.mineSweeper.gameBoard.toList()),
-                columns = mc.mineSweeper.col,
-                rows = mc.mineSweeper.row,
-                totalNumberOfKeys = mc.totalNumberOfKeys,
-                numberOfFoundKeys = mc.numberOfFoundKeys,
-                gameState = CONTINUE,
-                numberOfMovement = 0,
-                numberOfMines = mc.numberOfMines
-            )
-        }
+    fun onMovement(direction: Direction) {
+        val activeSession = session ?: return
+        if (!_uiState.value.canMove) return
+        val next = activeSession.move(direction)
+        if (next === _uiState.value.game) return
+        _uiState.value = _uiState.value.copy(game = next)
     }
 
-    fun onMovement(directionalOfMovement: DirectionalOfMovement) {
-        val playerState = mc.play(directionalOfMovement)
-        val newNumber =
-            if (playerState != null) currentState.numberOfMovement.inc()
-            else currentState.numberOfMovement
-        val isFinished = playerState == LOOSE || playerState == WIN
-        applyState {
-            copy(
-                gameState = playerState,
-                boardGame = Loaded(mc.mineSweeper.gameBoard.toList()),
-                numberOfMovement = newNumber,
-                totalNumberOfKeys = mc.totalNumberOfKeys,
-                numberOfFoundKeys = mc.numberOfFoundKeys
-            )
-        }
-        viewModelScope.launch {
-            eventChannel.send(
-                Event.ShowFinishGameDialog(
-                    FinishGame(
-                        isFinished,
-                        playerState == WIN
-                    )
-                )
-            )
-        }
+    fun onFlag(position: Position, flag: FlagKind) {
+        val activeSession = session ?: return
+        if (!_uiState.value.canMove) return
+        val next = activeSession.setFlag(position, flag)
+        if (next === _uiState.value.game) return
+        _uiState.value = _uiState.value.copy(game = next)
     }
 
     fun onTryAgain() {
-        viewModelScope.launch {
-            eventChannel.send(
-                Event.ShowFinishGameDialog()
-            )
-        }
-        onLevel(level)
+        _uiState.value.difficulty?.let(::onLevel)
     }
 
+    fun onRetryLoad() {
+        _uiState.value.difficulty?.let(::onLevel)
+    }
 
+    private fun showError(throwable: Throwable) {
+        _uiState.value = _uiState.value.copy(
+            loadState = GameLoadState.ERROR,
+            game = null,
+            errorMessage = throwable.message ?: "Unable to load this level."
+        )
+    }
 }

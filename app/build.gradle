@@ -10,4 +10,5 @@ dependencies {
     implementation libs.appcompatV7
     implementation project(path: ':core-game')
     implementation libs.gson
+    testImplementation libs.junit
 }

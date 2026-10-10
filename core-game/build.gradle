@@ -2,7 +2,18 @@ plugins {
     id 'java-library'
 }
 
+apply plugin: 'kotlin'
+
+repositories {
+    mavenCentral()
+}
+
 java {
     sourceCompatibility = JavaVersion.VERSION_1_8
     targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+dependencies {
+    implementation libs.kotlin
+    testImplementation libs.junit
 }

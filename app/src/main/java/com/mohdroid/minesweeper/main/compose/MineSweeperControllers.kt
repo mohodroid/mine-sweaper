@@ -10,31 +10,26 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.mohdroid.algorithm.DirectionalOfMovement
+import com.mohdroid.game.domain.Direction
 import com.mohdroid.compose.component.SimpleButton
-import com.mohdroid.compose.component.Space
 import com.mohdroid.compose.theme.MsTheme
 import com.mohdroid.minesweeper.R
 
 @Composable
 fun MineSweeperControllers(
     modifier: Modifier = Modifier,
-    onClicked: (DirectionalOfMovement) -> Unit
+    enabled: Boolean,
+    onClicked: (Direction) -> Unit
 ) {
-    Column(modifier, verticalArrangement = Arrangement.Center) {
-        TopControl(modifier = Modifier.align(Alignment.CenterHorizontally), onClicked = onClicked)
-        Row(modifier = Modifier.align(Alignment.CenterHorizontally)) {
-            LeftControl(
-                modifier = Modifier.align(Alignment.CenterVertically),
-                onClicked = onClicked
-            )
-            Space(size = 48.dp)
-            RightControl(
-                modifier = Modifier.align(Alignment.CenterVertically),
-                onClicked = onClicked
-            )
-        }
-        DownControl(modifier = Modifier.align(Alignment.CenterHorizontally), onClicked = onClicked)
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        LeftControl(enabled = enabled, onClicked = onClicked)
+        TopControl(enabled = enabled, onClicked = onClicked)
+        DownControl(enabled = enabled, onClicked = onClicked)
+        RightControl(enabled = enabled, onClicked = onClicked)
     }
 }
 
@@ -42,7 +37,7 @@ fun MineSweeperControllers(
 @Preview
 fun MineSweeperControllersPrev() {
     MsTheme {
-        MineSweeperControllers(Modifier.fillMaxWidth()) {
+        MineSweeperControllers(Modifier.fillMaxWidth(), enabled = true) {
 
         }
     }
@@ -51,13 +46,14 @@ fun MineSweeperControllersPrev() {
 @Composable
 fun LeftControl(
     modifier: Modifier = Modifier,
-    onClicked: (DirectionalOfMovement) -> Unit
+    enabled: Boolean,
+    onClicked: (Direction) -> Unit
 ) {
     MineSweeperControl(
         modifier = modifier,
-        painter = painterResource(id = R.drawable.ic_left_contoller),
+        painter = painterResource(id = R.drawable.ic_left_contoller), enabled = enabled, label = "Move left",
         onClicked = {
-            onClicked(DirectionalOfMovement.WEST)
+            onClicked(Direction.WEST)
         })
 
 }
@@ -66,13 +62,14 @@ fun LeftControl(
 @Composable
 fun TopControl(
     modifier: Modifier = Modifier,
-    onClicked: (DirectionalOfMovement) -> Unit
+    enabled: Boolean,
+    onClicked: (Direction) -> Unit
 ) {
     MineSweeperControl(
         modifier = modifier,
-        painter = painterResource(id = R.drawable.ic_up_controller),
+        painter = painterResource(id = R.drawable.ic_up_controller), enabled = enabled, label = "Move up",
         onClicked = {
-            onClicked(DirectionalOfMovement.NORTH)
+            onClicked(Direction.NORTH)
         })
 }
 
@@ -80,26 +77,28 @@ fun TopControl(
 @Composable
 fun RightControl(
     modifier: Modifier = Modifier,
-    onClicked: (DirectionalOfMovement) -> Unit
+    enabled: Boolean,
+    onClicked: (Direction) -> Unit
 ) {
     MineSweeperControl(
         modifier = modifier,
-        painter = painterResource(id = R.drawable.ic_right_controller),
+        painter = painterResource(id = R.drawable.ic_right_controller), enabled = enabled, label = "Move right",
         onClicked = {
-            onClicked(DirectionalOfMovement.EAST)
+            onClicked(Direction.EAST)
         })
 }
 
 @Composable
 fun DownControl(
     modifier: Modifier = Modifier,
-    onClicked: (DirectionalOfMovement) -> Unit
+    enabled: Boolean,
+    onClicked: (Direction) -> Unit
 ) {
     MineSweeperControl(
         modifier = modifier,
-        painter = painterResource(id = R.drawable.ic_bottom_contoller),
+        painter = painterResource(id = R.drawable.ic_bottom_contoller), enabled = enabled, label = "Move down",
         onClicked = {
-            onClicked(DirectionalOfMovement.SOUTH)
+            onClicked(Direction.SOUTH)
         })
 }
 
@@ -107,17 +106,21 @@ fun DownControl(
 fun MineSweeperControl(
     modifier: Modifier = Modifier,
     onClicked: () -> Unit,
-    painter: Painter
+    painter: Painter,
+    enabled: Boolean,
+    label: String
 ) {
     SimpleButton(
         modifier = modifier.size(48.dp),
+        enable = enabled,
+        accessibilityLabel = label,
         onClicked = onClicked,
         content = {
             Image(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.size(36.dp),
                 contentScale = ContentScale.FillBounds,
                 painter = painter,
-                contentDescription = null
+                contentDescription = label
             )
         })
 }
