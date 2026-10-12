@@ -43,7 +43,7 @@ Actual screenshots from the Android app running on a Nexus 5X / API 28 emulator.
 - [Compose layer and performance](#compose-layer-and-performance)
 - [Tests and contributor workflow](#tests-and-contributor-workflow)
 
-Diagrams use Mermaid, which GitHub renders directly. If your Markdown viewer shows diagram source instead, use a Mermaid-capable preview; the surrounding text explains the same flows.
+Read the flow diagrams from top to bottom. Each diagram covers one idea; implementation details are explained underneath. Diagrams use Mermaid and render directly on GitHub.
 
 ## Quick start
 
@@ -71,30 +71,32 @@ core-game/     Pure Kotlin board generation, rules, session, and snapshots
 core-compose/  Shared Compose theme and reusable UI components
 ```
 
-### Module and layer boundaries
+### The three modules
 
-The arrows below show **code dependencies/calls**, not the direction of returned UI state. Presentation and local data are logical layers inside `app`; they are not separate Gradle modules.
+An arrow means **depends on**. The Android app uses two independent core modules:
 
 ```mermaid
 flowchart TB
-    subgraph App["app — Android integration"]
-        UI["Presentation UI<br/>Navigation, screens, cells, controls"]
-        VM["Presentation state<br/>MainViewModel + GameUiState"]
-        Repo["Local data boundary<br/>GameRepository / SimpleGameRepository"]
-        Assets["Android asset I/O + JSON mapping<br/>ConfigManager + internal DTOs"]
-        UI -->|"actions / callbacks"| VM
-        VM -->|"loadLevel"| Repo
-        Repo --> Assets
-    end
-    Domain["core-game — pure Kotlin domain<br/>LevelDefinition, GameSession, GameSnapshot<br/>Validation, generation, BFS, moves, flags, lives"]
-    Shared["core-compose — shared UI<br/>Theme, typography, spacing, components"]
-    VM -->|"create / move / setFlag"| Domain
-    Repo -->|"map and validate domain definitions"| Domain
-    UI -->|"render domain snapshot types"| Domain
-    UI -->|"reuse visuals"| Shared
+    App["app<br/>Android app"]
+    Game["core-game<br/>Game rules"]
+    Compose["core-compose<br/>Shared visuals"]
+    App --> Game
+    App --> Compose
 ```
 
-At the Gradle level, `app` depends on `core-game` and `core-compose`. Neither core module depends on `app` or on the other core module. This keeps framework-specific code out of the game engine.
+Neither core module depends on `app` or on the other core module. The game engine has no Android or Compose dependencies.
+
+### Who owns each layer?
+
+| Layer | Main responsibility | Location |
+| --- | --- | --- |
+| UI | Show the board and send user actions. | Compose screens in `app` |
+| Presentation state | Load a level, own the session, and publish UI state. | `MainViewModel` in `app` |
+| Local data | Read bundled JSON and map it to a level definition. | Repository in `app` |
+| Domain | Generate the board and enforce all game rules. | `GameSession` in `core-game` |
+| Shared visuals | Provide reusable styling and components. | `core-compose` |
+
+UI, presentation state, and local data are logical layers inside `app`, not separate Gradle modules.
 
 ### Where to find the implementation
 
@@ -131,66 +133,39 @@ This is **pragmatic layering inspired by Clean Architecture**, not a claim of st
 
 ## How layers communicate
 
-### Starting a game: assets → domain → screen
+### Starting a game
+
+These arrows mean **next step**, not direct calls between every box:
+
+```mermaid
+flowchart TD
+    Choose["1. Player chooses a difficulty"] --> Load["2. ViewModel requests the level"]
+    Load --> Read["3. Repository reads local JSON"]
+    Read --> Build["4. GameSession creates the board"]
+    Build --> State["5. ViewModel publishes UI state"]
+    State --> Show["6. Compose shows the board"]
+```
+
+The ViewModel calls the repository, receives a `LevelDefinition`, then calls `GameSession.create`. The repository does **not** start the game itself. JSON work runs on IO; generation runs on `Dispatchers.Default`.
+
+While this happens, the screen shows `LOADING`. Success publishes `READY`; a read, validation, or generation failure publishes `ERROR` with a retry action. `MainNavGraph` collects this state and passes it to the screen. Requesting another level cancels the previous load job.
+
+### Moving or setting a flag
+
+Only three participants are involved. Solid arrows send actions; dashed arrows return state:
 
 ```mermaid
 sequenceDiagram
-    actor Player
-    participant UI as Compose / Navigation
-    participant VM as MainViewModel
-    participant Repo as SimpleGameRepository
-    participant Assets as ConfigManager / JSON assets
-    participant Engine as GameSession (core-game)
-    Player->>UI: Select difficulty
-    UI->>VM: onLevel(difficulty)
-    VM-->>UI: StateFlow: LOADING
-    Note over UI,VM: Navigate to board; render loading state
-    VM->>Repo: loadLevel(difficulty)
-    Repo->>Assets: Read bundled JSON
-    Assets-->>Repo: JSON text
-    Note over Repo: IO dispatcher: parse DTOs, map, validate
-    Repo-->>VM: Result of LevelDefinition
-    alt Definition loaded successfully
-        VM->>Engine: create(level)
-        Note over Engine: Default dispatcher: generate board and check routes
-        alt Session created successfully
-            Engine-->>VM: Session and initial snapshot
-            VM-->>UI: StateFlow: READY + GameSnapshot
-            UI-->>Player: Render board, stats, clues, controls
-        else Generation failure
-            Engine-->>VM: Failure
-            VM-->>UI: StateFlow: ERROR + message
-            UI-->>Player: Show retry action
-        end
-    else Read, mapping, or validation failure
-        VM-->>UI: StateFlow: ERROR + message
-        UI-->>Player: Show retry action
-    end
+    participant UI as Compose UI
+    participant VM as ViewModel
+    participant Game as GameSession
+    UI->>VM: Move or flag action
+    VM->>Game: Apply the action
+    Game-->>VM: Player-visible snapshot
+    VM-->>UI: Updated UI state
 ```
 
-`MainNavGraph` collects `uiState` and passes it down with callbacks. `MainViewModel` cancels the previous load job when another level is requested. Both level-load failures and session-generation failures become an explicit `ERROR` state.
-
-### During play: intention → rule → snapshot → render
-
-```mermaid
-sequenceDiagram
-    actor Player
-    participant UI as Compose board / controls
-    participant VM as MainViewModel
-    participant Engine as Existing GameSession
-    Player->>UI: Tap direction or choose reminder flag
-    UI->>VM: onMovement(direction) / onFlag(position, kind)
-    VM->>Engine: move(direction) / setFlag(position, kind)
-    Note over Engine: Check rules; update internal board only if accepted
-    Engine-->>VM: GameSnapshot
-    alt Snapshot changed
-        VM-->>UI: Publish updated GameUiState
-        UI-->>Player: Render new position, counters, clues, flags
-    else Invalid move or unchanged flag
-        Note over VM,UI: Same snapshot instance; no new UI state emitted
-    end
-    Note over UI,Engine: No asset loading or board generation on this path
-```
+The UI draws the result; `GameSession` decides whether an action is allowed. An invalid move returns the same snapshot, so the ViewModel skips publishing an update. **Normal taps never reload JSON or regenerate the board.**
 
 Selecting a covered cell is local UI state; choosing **Mine flag**, **Key flag**, or **Clear** sends a domain action. Flags belong to the session, while selection highlighting and dismissing the review dialog belong to Compose.
 
@@ -215,24 +190,14 @@ Candidates are shuffled with the session's seed before selection. This gives det
 
 ```mermaid
 flowchart TD
-    Input["LevelDefinition + seed"] --> Validate{"Valid definition?"}
-    Validate -->|"no"| Failure["Return failure"]
-    Validate -->|"yes"| Base["Fill STEP cells; place start and exit<br/>Protect row-first, then column exit corridor"]
-    Base --> Fixed["Place explicit assets and random blocks<br/>Reject hazards on protected corridor"]
-    Fixed --> KeyCheck{"BFS: every fixed key<br/>safely reachable without locked exit?"}
-    KeyCheck -->|"no"| Failure
-    KeyCheck -->|"yes"| Reserve["Reserve BFS paths to fixed keys"]
-    Reserve --> Mines["Draft mine placement outside reserved routes"]
-    Mines --> Safe["BFS: compute final mine-free reachable cells"]
-    Safe --> Fits{"Fixed keys safe and enough<br/>eligible cells for random keys?"}
-    Fits -->|"yes"| Keys["Place random keys in safe cells"]
-    Keys --> Session["Create session + player-visible snapshot"]
-    Fits -->|"no"| Retry{"Attempts remaining?<br/>Maximum 128"}
-    Retry -->|"yes"| Mines
-    Retry -->|"no"| Failure
-    Fixed -.->|"invalid placement"| Failure
-    Mines -.->|"insufficient mine candidates"| Retry
+    Validate["1. Validate the level"] --> Base["2. Protect exit route and place blocks"]
+    Base --> Routes["3. BFS checks and protects fixed-key routes"]
+    Routes --> Mines["4. Place mines outside protected routes"]
+    Mines --> Keys["5. BFS finds safe cells for random keys"]
+    Keys --> Ready["6. Start the game"]
 ```
+
+This diagram shows the successful path. Invalid definitions or fixed placements fail immediately. If random mine/key placement cannot satisfy the constraints, generation retries that placement up to 128 times, then reports failure.
 
 **Where BFS is used:** `reachablePositions` explores cardinal neighbors with a FIFO queue and a visited set to check whether safe paths exist. `safePath` also uses BFS, recording parent positions so a route to an explicitly positioned key can be reconstructed and protected. These searches exclude blocks, mines when requested, and the locked exit when checking key access.
 
