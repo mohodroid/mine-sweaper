@@ -13,4 +13,10 @@
     <string name="try_again">continue</string>
     <string name="congratulations">congratulations!</string>
     <string name="exit_game">Exit Game</string>
+    <string name="level_description">%1$d × %2$d • %3$d mines • %4$d keys</string>
+    <string name="unable_to_load_levels">Unable to load levels. Please try again.</string>
+    <string name="unable_to_load_game">Unable to start this game. Please try again.</string>
+    <string name="invalid_level_selection">This level selection is invalid. Please choose a level again.</string>
+    <string name="retry_loading">Try again</string>
+    <string name="back_to_levels">Back to levels</string>
 </resources>

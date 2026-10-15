@@ -1,0 +1,16 @@
+plugins {
+    id 'java-library'
+}
+apply plugin: 'kotlin'
+repositories { mavenCentral() }
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+dependencies {
+    implementation project(':core-game')
+    implementation libs.kotlinJvm
+    implementation libs.coroutines
+    api libs.koinCore
+    testImplementation libs.junit
+}

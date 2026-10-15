@@ -1,11 +1,11 @@
 package com.mohdroid.minesweeper
 
 import android.app.Application
-import com.mohdroid.minesweeper.main.mainModule
+import com.mohdroid.data.game.di.gameDataModule
+import com.mohdroid.domain.game.di.gameDomainModule
+import com.mohdroid.minesweeper.di.appModule
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.GlobalContext.startKoin
-import org.koin.core.qualifier.named
-import org.koin.dsl.module
 
 class MineSweeperApplication : Application() {
     override fun onCreate() {
@@ -13,11 +13,7 @@ class MineSweeperApplication : Application() {
 
         startKoin {
             androidContext(this@MineSweeperApplication)
-            modules(listOf(mainModule, module, appContext))
+            modules(gameDataModule, gameDomainModule, appModule)
         }
     }
-}
-
-val appContext = module {
-    single(named("MineSweeperApplication")) { androidContext() }
 }

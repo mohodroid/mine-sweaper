@@ -6,7 +6,7 @@ There are three bundled difficulties (Easy, Medium, Hard). The app has no API ca
 
 ## Game preview
 
-Actual screenshots from the Android app running on a Nexus 5X / API 28 emulator. The gameplay images show the same Easy session, including the compact movement controls.
+Existing captures from a Nexus 5X / API 28 emulator. The gameplay images show the same Easy session and compact movement controls. The difficulty-selection image predates the current metadata labels; level choices now also show board size and mine/key counts.
 
 <table>
   <tr>
@@ -37,145 +37,285 @@ Actual screenshots from the Android app running on a Nexus 5X / API 28 emulator.
 
 - [Quick start](#quick-start)
 - [Architecture and layers](#architecture-and-layers)
-- [How layers communicate](#how-layers-communicate)
+- [Models and mapping boundaries](#models-and-mapping-boundaries)
+- [Presentation: lightweight MVI](#presentation-lightweight-mvi)
+- [How a game starts and changes](#how-a-game-starts-and-changes)
+- [Dependency injection and session ownership](#dependency-injection-and-session-ownership)
 - [Game algorithm and BFS](#game-algorithm-and-bfs)
 - [Data and level format](#data-and-level-format)
-- [Compose layer and performance](#compose-layer-and-performance)
+- [Compose and performance](#compose-and-performance)
 - [Tests and contributor workflow](#tests-and-contributor-workflow)
-
-Read the flow diagrams from top to bottom. Each diagram covers one idea; implementation details are explained underneath. Diagrams use Mermaid and render directly on GitHub.
 
 ## Quick start
 
-Requirements:
+### Requirements
 
-- Android Studio with an Android SDK containing **API 31** and an emulator or device running **API 21+**.
-- A JDK compatible with Android Gradle Plugin 7.0.3 (JDK 11 is the expected choice).
-- The Gradle wrapper included in this repository; a separate Gradle installation is unnecessary.
+- JDK 11.
+- Android SDK Platform 31 and Build Tools 30.0.2.
+- An emulator or Android device running API 21 or newer.
+- The included Gradle wrapper; a separate Gradle installation is not needed.
 
-Open the repository in Android Studio, let Gradle sync, and run the `app` configuration. From a terminal with `ANDROID_SDK_ROOT` set to your SDK location:
+Configure the SDK using `ANDROID_SDK_ROOT` or a local `local.properties` containing `sdk.dir=/path/to/Android/sdk`. Use JDK 11 for Gradle, through `JAVA_HOME` or your IDE's Gradle JVM setting. Android Studio is not required for the command-line workflow.
+
+Build from the repository root:
 
 ```bash
 ./gradlew :app:assembleDebug
-./gradlew :core-game:test :app:testDebugUnitTest
 ```
 
-The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`. Select a difficulty on launch, then use the four on-screen direction controls. The start and visited safe cells show `M` (adjacent mines) and `K` (adjacent keys) counts for their eight neighbors. Tap a covered cell to add an editable mine/key reminder flag; flags do not block movement. The board scrolls on larger levels. A mine consumes a life (currently one life per game), reveals the mine, and leaves the player on the previous safe cell. After a win or loss, choose **Review board**, **Try again**, or **Exit**.
+The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. With `adb` available on your PATH and an emulator running:
+
+```bash
+adb devices
+adb -s emulator-5554 install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s emulator-5554 shell am start -n com.mohdroid.minesweeper/.MainActivity
+```
+
+Replace `emulator-5554` with the identifier shown by `adb devices`. Select a difficulty, move with the direction buttons, and tap covered cells to set reminder flags.
+
+The game is offline. A first build may still need internet access to download Gradle and library dependencies; `--offline` works only after those dependencies are cached.
 
 ## Architecture and layers
 
+The project has **five Gradle modules**. Presentation is organized by feature inside `app`; there are no separate feature Gradle modules.
+
 ```text
-app/           Android entry point, navigation, game UI, ViewModel,
-               local-asset repository, JSON mapping, and Koin wiring
-core-game/     Pure Kotlin board generation, rules, session, and snapshots
-core-compose/  Shared Compose theme and reusable UI components
+app/           Android entry point, navigation, level/game MVI, UI models, app DI
+domain/        Application use cases, public models, repository contract, session coordination
+data/          Bundled JSON assets, DTO mapping, asset repository, data DI
+core-game/     Reusable Kotlin engine, board generation, rules, engine models
+core-compose/  Shared Compose theme and visual primitives
 ```
 
-### The three modules
+### Layer architecture
 
-An arrow means **depends on**. The Android app uses two independent core modules:
-
-```mermaid
-flowchart TB
-    App["app<br/>Android app"]
-    Game["core-game<br/>Game rules"]
-    Compose["core-compose<br/>Shared visuals"]
-    App --> Game
-    App --> Compose
-```
-
-Neither core module depends on `app` or on the other core module. The game engine has no Android or Compose dependencies.
-
-### Who owns each layer?
-
-| Layer | Main responsibility | Location |
-| --- | --- | --- |
-| UI | Show the board and send user actions. | Compose screens in `app` |
-| Presentation state | Load a level, own the session, and publish UI state. | `MainViewModel` in `app` |
-| Local data | Read bundled JSON and map it to a level definition. | Repository in `app` |
-| Domain | Generate the board and enforce all game rules. | `GameSession` in `core-game` |
-| Shared visuals | Provide reusable styling and components. | `core-compose` |
-
-UI, presentation state, and local data are logical layers inside `app`, not separate Gradle modules.
-
-### Where to find the implementation
-
-| Concern | Main code | Responsibility |
-| --- | --- | --- |
-| App entry and DI | [`MainActivity`](app/src/main/java/com/mohdroid/minesweeper/MainActivity.kt), [`MineSweeperApplication`](app/src/main/java/com/mohdroid/minesweeper/MineSweeperApplication.kt), [`mainModule`](app/src/main/java/com/mohdroid/minesweeper/main/mainModule.kt) | Set Compose content and connect Koin dependencies. |
-| Navigation | [`MainNavGraph`](app/src/main/java/com/mohdroid/minesweeper/navigation/navgraphs/MainNavGraph.kt) | Move between difficulty selection and the game board. |
-| Presentation state | [`MainViewModel`](app/src/main/java/com/mohdroid/minesweeper/main/viewmodel/MainViewModel.kt) | Load a level, own the active session, translate user actions into UI state. |
-| Local data | [`SimpleGameRepository`](app/src/main/java/com/mohdroid/minesweeper/main/repository/SimpleGameRepository.kt), [`ConfigManager`](app/src/main/java/com/mohdroid/minesweeper/ConfigManager.kt) | Read asset JSON, map it to domain models, and report failures. |
-| Game rules | [`GameDomain.kt`](core-game/src/main/kotlin/com/mohdroid/game/domain/GameDomain.kt) | Validate levels, generate boards, apply moves, and return snapshots. |
-| Screens and cells | [`BoardGameScreen`](app/src/main/java/com/mohdroid/minesweeper/main/screen/BoardGameScreen.kt), [`MineSweeperCell`](app/src/main/java/com/mohdroid/minesweeper/main/compose/MineSweeperCell.kt) | Render state and emit directional input; they do not decide game rules. |
-| Shared UI | [`core-compose`](core-compose/src/main/java/com/mohdroid/compose/) | Theme, typography, spacing, and reusable button/layout components. |
-
-### Why these boundaries?
-
-`core-game` is a plain JVM/Kotlin module. It knows nothing about Android, Compose, JSON, navigation, or dependency injection, so game rules can be tested without an emulator. `core-compose` owns reusable visual primitives but not gameplay. `app` is the Android integration layer: it contains the feature-specific presentation code and the only level data source.
-
-This is intentionally a small, pragmatic layered architecture, **not** a separate Gradle module for every layer. The `GameRepository` interface currently lives in `app`, alongside its local implementation, because there is only one offline data source. The domain models and rules still point outward to no Android dependency. If additional data sources or features are introduced, the repository contract could be moved to a domain-facing module without changing the core game rules.
-
-Koin creates `MainViewModel`, binds `GameRepository` to `SimpleGameRepository`, and provides `ConfigManager` for reading Android assets. There is no network client or authentication layer to configure.
-
-### Architecture decisions and tradeoffs
-
-| Decision | Why it fits this project | Boundary to preserve |
-| --- | --- | --- |
-| Pure Kotlin game engine | Rules and seeded board generation can be tested quickly on the JVM without Android. | Do not add Compose, Android context, JSON DTOs, or DI to `core-game`. |
-| One cohesive `GameSession` | Movement, discovery, flags, keys, and lives operate on the same board and lifecycle. Separate use-case classes for every small action are not currently necessary. | Keep gameplay decisions here, not in the ViewModel or Composables. |
-| Local repository inside `app` | The only data source is bundled JSON; additional data modules would add little value today. | Repository and DTO details must not leak into the engine. Move the contract outward if multiple consumers/data sources justify it. |
-| ViewModel-owned session and read-only state flow | The ViewModel coordinates loading and owns the active session; screens render the published state. | UI code sends intentions, rather than mutating the board. |
-| Player-visible snapshots | Hidden contents stay internal while the UI receives everything needed to render. | A covered cell must not expose whether it is a mine, key, or floor. |
-| Shared UI module separate from rules | Styling can evolve independently of gameplay. | Keep game-specific cells and screens in `app`; share genuinely reusable visuals only. |
-
-This is **pragmatic layering inspired by Clean Architecture**, not a claim of strict Clean Architecture: the repository interface currently lives in `app`, and there is no separate use-case layer or module per feature.
-
-## How layers communicate
-
-### Starting a game
-
-These arrows mean **next step**, not direct calls between every box:
+This view shows each layer's responsibility and dependencies, rather than every Gradle dependency. Arrows mean **uses** or **implements**, as labeled; they do not show execution order.
 
 ```mermaid
 flowchart TD
-    Choose["1. Player chooses a difficulty"] --> Load["2. ViewModel requests the level"]
-    Load --> Read["3. Repository reads local JSON"]
-    Read --> Build["4. GameSession creates the board"]
-    Build --> State["5. ViewModel publishes UI state"]
-    State --> Show["6. Compose shows the board"]
+    Presentation["Presentation · app<br/>Compose screens, ViewModels, reducers"]
+    Domain["Application domain · domain<br/>Use cases, repository contracts, session"]
+    Data["Data · data<br/>AssetLevelRepository and JSON assets"]
+    Engine["Game engine · core-game<br/>Generation, movement, clues, lives"]
+    Visuals["Shared visuals · core-compose<br/>Theme and reusable components"]
+
+    Presentation -->|Uses domain contracts| Domain
+    Presentation -->|Uses shared visuals| Visuals
+    Data -->|Implements LevelRepository| Domain
+    Domain -->|Delegates game rules| Engine
 ```
 
-The ViewModel calls the repository, receives a `LevelDefinition`, then calls `GameSession.create`. The repository does **not** start the game itself. JSON work runs on IO; generation runs on `Dispatchers.Default`.
+Feature ViewModels depend on **domain use-case contracts**, not repository implementations or `GameEngine`. The level-loading contract belongs to domain and its implementation belongs to data. The engine knows nothing about the other layers; shared visuals contain no gameplay logic.
 
-While this happens, the screen shows `LOADING`. Success publishes `READY`; a read, validation, or generation failure publishes `ERROR` with a retry action. `MainNavGraph` collects this state and passes it to the screen. Requesting another level cancels the previous load job.
+### Responsibilities and decisions
 
-### Moving or setting a flag
+| Module | Owns | Must not own |
+| --- | --- | --- |
+| `app` | ViewModels, presentation state, pure reducers, Compose, navigation, UI mapping. | Board-generation rules, engine internals, asset parsing in feature code. |
+| `domain` | Application operations, level-loading port, engine adapters, active-session coordination. | Android context, JSON DTOs, Compose, navigation. |
+| `data` | Asset reading, Gson DTOs, mapping to domain models, `LevelRepository` implementation. | Gameplay rules or presentation models. |
+| `core-game` | Generation, safe reachability, movement, clues, reminders, lives, victory, visible snapshots. | Repositories, use cases, Android, Compose, Gson, Koin. |
+| `core-compose` | Reusable visual primitives and theme. | Game-specific feature state or business rules. |
 
-Only three participants are involved. Solid arrows send actions; dashed arrows return state:
+This applies Clean Architecture through dependency inversion and explicit model boundaries. There is one deliberate framework choice: **Koin is allowed in the dedicated `di` packages of app, domain, and data**. Domain business classes still use constructor injection and have no Android or Koin imports. The engine remains entirely DI-free.
+
+The repository contract is defined in `domain` and implemented in `data`. It supplies level definitions; it does not own the engine or become a general-purpose game controller. Gameplay orchestration belongs to use cases and the domain session.
+
+### Domain operations
+
+| Public contract | Operation | Implementation |
+| --- | --- | --- |
+| `LoadLevelsUseCase` | Load and order the available level summaries. | `DefaultLoadLevelsUseCase` |
+| `StartGameUseCase` | Load a difficulty and create a fresh game. Used for both initial start and restart. | `DefaultStartGameUseCase` |
+| `GameInteraction` | Move the player or set/change/toggle/clear a reminder in the current session. | `DefaultGameInteraction` |
+| `ExitGameUseCase` | Clear the game and invalidate unfinished starts. | `DefaultExitGameUseCase` |
+
+These interfaces are public; their default implementations are module-internal. Use cases coordinate application behavior, while detailed game rules remain in the reusable engine.
+
+### Source map
+
+| Start here | Purpose |
+| --- | --- |
+| [Level feature](app/src/main/java/com/mohdroid/minesweeper/feature/level/) | `LevelRoute`, `LevelScreen`, `LevelViewModel`, reducer, contracts, models, mapper, components. |
+| [Game feature](app/src/main/java/com/mohdroid/minesweeper/feature/game/) | `GameRoute`, `GameScreen`, `GameViewModel`, reducer, contracts, models, mappers, components. |
+| [MainNavGraph](app/src/main/java/com/mohdroid/minesweeper/navigation/navgraphs/MainNavGraph.kt) | Connects feature routes and passes the selected difficulty identifier. |
+| [Domain use cases](domain/src/main/kotlin/com/mohdroid/domain/game/usecase/) | Contracts and implementations grouped by `level`, `start`, `interaction`, and `exit`. |
+| [GameSessionCoordinator](domain/src/main/kotlin/com/mohdroid/domain/game/session/GameSessionCoordinator.kt) | Owns the active engine, coordinates requests, and prevents stale activation. |
+| [LevelRepository](domain/src/main/kotlin/com/mohdroid/domain/game/repository/LevelRepository.kt) | Source-independent level-loading interface. |
+| [AssetLevelRepository](data/src/main/java/com/mohdroid/data/game/repository/AssetLevelRepository.kt) | Reads local assets and returns domain configurations/summaries. |
+| [GameEngine](core-game/src/main/kotlin/com/mohdroid/game/domain/engine/GameEngine.kt) | Authoritative board generation and gameplay behavior. |
+| [AppModule](app/src/main/java/com/mohdroid/minesweeper/di/AppModule.kt) | Koin ViewModel factories and destination-owned game scopes. |
+| [core-compose](core-compose/src/main/java/com/mohdroid/compose/) | Shared theme and reusable UI primitives. |
+
+## Models and mapping boundaries
+
+There is no global model or mapper module. Each layer owns the representation it exposes.
+
+| Owner | Models | Meaning |
+| --- | --- | --- |
+| `data/game/model` | `LevelJsonDto`, `AssetJsonDto`, `PositionJsonDto` | Internal JSON transport format. |
+| `domain/game/model/level` | `Difficulty`, `LevelSummary`, `LevelConfiguration`, `LevelAsset` | Available difficulties and source-independent level setup. |
+| `domain/game/model/board` | `CellState`, `Position`, `Direction`, `Reminder`, `TileKind` | Domain board state and interaction inputs. |
+| `domain/game/model/session` | `GameState`, `GamePhase` | Application-facing state of one game. |
+| `core-game/domain/model` | `LevelDefinition`, `GameSnapshot`, `CellSnapshot` and engine enums | The engine library's own contract. |
+| `app/feature/level` | `LevelUiState`, `LevelItemUiModel`, intents and navigation requests | Level-screen rendering and interaction. |
+| `app/feature/game` | `GameUiState`, `GameBoardUiModel`, `CellUiModel`, intents and navigation requests | Game-screen rendering and interaction. |
+
+Mappings are explicit:
+
+```text
+Loading:   JSON DTO → LevelConfiguration → engine LevelDefinition
+Rendering: engine GameSnapshot → domain GameState → GameBoardUiModel → Compose
+Input:     presentation direction/reminder → domain input → engine input
+```
+
+- **Data mappers** translate DTOs into domain configurations and summaries.
+- **Domain mappers** adapt between the domain contract and engine types.
+- **Presentation mappers** translate domain state and UI inputs. For example, a visited key becomes `COLLECTED_KEY`, and an exit becomes `LOCKED_EXIT` or `OPEN_EXIT`.
+
+Compose screens, navigation, and UI models do not consume engine snapshots. ViewModels use domain contracts and presentation mappers. The engine's mutable `Cell` class is internal and never exposed as a UI model.
+
+## Presentation: lightweight MVI
+
+Both features use the same unidirectional flow, without an additional MVI framework:
+
+```mermaid
+flowchart LR
+    Screen["Screen"] -->|Intent| VM["ViewModel"]
+    VM -->|Change| Reducer["Pure reducer"]
+    Reducer -->|New state| State["StateFlow"]
+    State -->|Render| Screen
+```
+
+The ViewModel owns and publishes the `StateFlow`; the reducer simply returns the next state.
+
+| Part | Responsibility |
+| --- | --- |
+| `Intent` | Typed user or lifecycle input: select a level, move, set a reminder, retry, review, exit, acknowledge navigation. |
+| ViewModel | Handle intents, call domain use cases, map results, dispatch internal changes. |
+| `Change` | Internal presentation message describing a transition or operation result. |
+| Reducer | Pure `reduce(previousState, change)` function. No I/O, Koin, navigation, or engine calls. |
+| `UiState` | Read-only rendering state, including loading, board/levels, selection, error, and pending navigation. |
+| Route | Obtain the destination's ViewModel, collect state, perform navigation, acknowledge handled requests. |
+| Screen | Render supplied state and send intents. It has no ViewModel, Koin, or navigation dependency. |
+
+### Feature ownership
+
+`LevelViewModel` loads the catalogue from existing assets through `LoadLevelsUseCase`, maps metadata for display, validates the selected identifier, and prevents repeated navigation from rapid taps. It **does not create a game session**.
+
+`GameViewModel` starts the selected difficulty once, handles gameplay/restart/exit, and owns presentation state for selected cells and board review. Game validity, clues, lives, and victory are still engine decisions. Scroll positions remain local Compose state.
+
+### Lifecycle and navigation effects
+
+Navigation uses **typed, retained requests in UI state**, not a fire-and-forget event channel:
+
+1. The ViewModel publishes `pendingNavigation`.
+2. The route handles it only while its destination is `RESUMED`.
+3. After navigation, the route sends `NavigationHandled` to clear that request.
+
+The level feature keeps choices disabled until its destination resumes after gameplay. The game feature makes repeated exit intents idempotent. This policy retains pending requests during backgrounding while the ViewModel survives and avoids replaying acknowledged requests on resume. It does not provide persistence across process death.
+
+[LifecycleCollection.kt](app/src/main/java/com/mohdroid/minesweeper/ui/lifecycle/LifecycleCollection.kt) provides helpers compatible with the existing library versions: rendering collects at `STARTED` or above, and navigation collects only at `RESUMED`. Subscriptions stop below those thresholds and restart with the latest state. This pauses collection, not independent work already running in `viewModelScope`.
+
+### Loading and recovery
+
+`LevelUiState` has `LOADING`, `READY`, and `ERROR` states. `GameUiState` also has `IDLE` for an uninitialized or exited game.
+
+Presentation errors are categories defined by [UiError](app/src/main/java/com/mohdroid/minesweeper/ui/error/UiError.kt), mapped to string resources in Compose:
+
+| Error | Recovery |
+| --- | --- |
+| `LEVEL_LOADING_FAILED` | Retry the catalogue load. |
+| `GAME_LOADING_FAILED` | Retry the selected difficulty. |
+| `INVALID_LEVEL_SELECTION` | Return to level selection; do not offer a retry without a valid difficulty. |
+
+Raw exception messages are not displayed as loading errors. Cancellation is not converted into a loading failure, and stale results cannot replace a restarted or exited game. The existing interaction-error policy is unchanged: failed movement/reminder results leave the published UI state as it was.
+
+## How a game starts and changes
+
+### Game action and data flow
+
+This sequence shows the successful start/restart, movement, or reminder flow. It separates calls from the models returned across each boundary.
 
 ```mermaid
 sequenceDiagram
-    participant UI as Compose UI
-    participant VM as ViewModel
-    participant Game as GameSession
-    UI->>VM: Move or flag action
-    VM->>Game: Apply the action
-    Game-->>VM: Player-visible snapshot
-    VM-->>UI: Updated UI state
+    participant UI as Compose
+    participant VM as GameViewModel
+    participant Domain as Use case + Session
+    participant Data as Asset repository
+    participant Engine as GameEngine
+
+    UI->>VM: Start, move, or reminder intent
+    VM->>Domain: Call domain contract
+
+    opt Start or restart only
+        Domain->>Data: Load difficulty
+        Data-->>Domain: LevelConfiguration
+    end
+
+    Domain->>Engine: Create, move, or set flag
+    Engine-->>Domain: GameSnapshot
+    Note over Domain: Map engine models to domain models
+    Domain-->>VM: GameState
+
+    Note over VM: Map to UI models, then reduce state
+    VM-->>UI: GameUiState via StateFlow
 ```
 
-The UI draws the result; `GameSession` decides whether an action is allowed. An invalid move returns the same snapshot, so the ViewModel skips publishing an update. **Normal taps never reload JSON or regenerate the board.**
+Movement and reminders reuse the active engine; they do not read assets again. Selecting a cell and reviewing the board only change presentation state. Exit uses the acknowledged navigation flow described above.
 
-Selecting a covered cell is local UI state; choosing **Mine flag**, **Key flag**, or **Clear** sends a domain action. Flags belong to the session, while selection highlighting and dismissing the review dialog belong to Compose.
+### Load choices, then start a game
+
+```mermaid
+flowchart TD
+    Levels["Load level summaries"] --> Choice["Player chooses a difficulty"]
+    Choice --> Start["StartGameUseCase loads its configuration"]
+    Start --> Session["Session creates the engine"]
+    Session --> Render["Map state and render the game"]
+```
+
+The level catalogue and game start are separate operations:
+
+1. `LevelViewModel → LoadLevelsUseCase → LevelRepository.loadLevels()` loads dimensions and mine/key counts without creating an engine.
+2. The level route navigates with **only the difficulty identifier**, not a board object or shared ViewModel.
+3. The new game destination obtains its own `GameViewModel`, which invokes `StartGameUseCase`.
+4. The start use case obtains a configuration through `LevelRepository.loadLevel(difficulty)`, then activates the domain session.
+5. `GameSessionCoordinator` creates `GameEngine`, maps the initial snapshot to `GameState`, and returns it. The ViewModel maps that into UI state.
+
+Asset reading and JSON conversion run on IO. Engine generation and initial engine-to-domain mapping run on `Dispatchers.Default`. The ViewModel publishes presentation state on its UI dispatcher.
+
+### Move, mark, restart, or exit
+
+- **Select a cell:** UI intent → game reducer → selected-cell state. No asset read, engine generation, movement, or reveal.
+- **Move or mark:** UI intent → `GameInteraction` → shared session → existing engine → domain state → presentation mapping → reducer.
+- **Restart:** invoke the same `StartGameUseCase` for the current difficulty. This reloads its definition and creates a fresh layout and counters.
+- **Exit:** cancel pending loading, invalidate and clear the active session, then publish a back-navigation request.
+
+A new start invalidates older domain requests. Cancellation plus request-generation guards prevent delayed results from reopening a game after restart or exit.
+
+## Dependency injection and session ownership
+
+[MineSweeperApplication](app/src/main/java/com/mohdroid/minesweeper/MineSweeperApplication.kt) starts Koin with three definitions:
+
+| Koin module | Provides |
+| --- | --- |
+| `gameDataModule` | Asset reader wiring, IO dispatcher, singleton `LevelRepository` implementation. |
+| `gameDomainModule` | Catalogue use case, computation dispatcher, game-scoped session and gameplay use cases. |
+| `appModule` | Level ViewModel and parameterized game ViewModel factories. |
+
+Each game navigation destination owns its ViewModel. Its Koin factory creates a unique game scope, where `StartGameUseCase`, `GameInteraction`, and `ExitGameUseCase` all share one internal `GameSessionCoordinator`. A second game destination gets a different session.
+
+The internal `GameSession` interface gives use cases access to start/activate, move, reminder, and exit operations without exposing the engine to presentation. Koin assembles these objects; it does **not** replace the need for session ownership or coordination.
+
+Exiting clears the active game. When the game ViewModel is cleared, it also closes its Koin scope; the session's scope-close hook clears any remaining engine state. There is no activity-wide game ViewModel or manually assembled production `GameUseCases` container.
 
 ## Game algorithm and BFS
 
-The central API is `GameSession.create(level, seed, startingLives)` followed by `session.move(direction)`, `session.setFlag(position, flag)`, and `session.snapshot()`. A session owns the true mutable board internally; callers receive `GameSnapshot` values containing only player-visible cell information. The optional seed makes random placement reproducible in tests. `startingLives` defaults to one, but the rule supports higher values. Normal gameplay uses a fresh seed, so **Try again** creates a new layout from the same difficulty definition.
+The central API is `GameEngine.create(level, seed, startingLives)` followed by `engine.move(direction)`, `engine.setFlag(position, flag)`, and `engine.snapshot()`. The engine owns the true mutable board internally; its callers in `domain` receive engine `GameSnapshot` / `CellSnapshot` values containing only player-visible information. Plain public models live in separate files under `domain.model`, not in `GameEngine.kt`. Domain mappers first adapt engine snapshots into `GameState`; presentation mappers then produce UI models before anything reaches Compose. The optional seed makes random placement reproducible in tests. `startingLives` defaults to one, but the rule supports higher values. Normal gameplay uses a fresh seed, so **Try again** creates a new layout from the same difficulty definition.
 
 ### 1. Validate and generate a board
 
-`LevelDefinition.validate()` requires a positive board size, exactly one start and one exit, explicit positions for both, non-negative counts, in-bounds and non-duplicate explicit positions, and no more requested tiles than board cells. `GameSession.create` returns a `Result` failure if validation or placement cannot succeed; the ViewModel displays an error state with a retry action.
+`LevelDefinition.validate()` requires a positive board size, exactly one start and one exit, explicit positions for both, non-negative counts, in-bounds and non-duplicate explicit positions, and no more requested tiles than board cells. `GameEngine.create` returns a `Result` failure if validation or placement cannot succeed; the failure passes through the domain start contract and becomes a retryable presentation error.
 
 Generation then:
 
@@ -207,7 +347,7 @@ The guarantee is **safe reachability**, not that every board can be solved from 
 
 ### 2. Apply a movement
 
-Each direction moves one row or column; there is no diagonal movement. `GameSession.move` checks the proposed cell before changing state:
+Each direction moves one row or column; there is no diagonal movement. `GameEngine.move` checks the proposed cell before changing state:
 
 | Condition | Result |
 | --- | --- |
@@ -224,9 +364,9 @@ Only accepted moves, including a first mine hit, increase the move count. A key 
 
 ### 3. Publish a renderable snapshot
 
-`GameSnapshot` contains the player position, counters, lives, phase, and a read-only view of visible cells. Unvisited steps, mines, and keys all have a `null` tile in the snapshot; the secret board never escapes `GameSession` during play. Visited safe cells carry static counts of mines and keys in their eight neighbors. On win/loss, all true tiles are exposed for board review. Invalid moves return the **same snapshot instance**. Accepted moves and flag changes copy only changed board rows and share unchanged rows/cells with the previous snapshot; the terminal reveal is intentionally a full-board update.
+`GameSnapshot` contains the player position, counters, lives, phase, and a read-only view of visible cells. Unvisited steps, mines, and keys all have a `null` tile in the snapshot; the secret board never escapes `GameEngine` during play. Visited safe cells carry static counts of mines and keys in their eight neighbors. On win/loss, all true tiles are exposed for board review. Invalid moves return the **same snapshot instance**. Accepted moves and flag changes copy only changed board rows and share unchanged rows/cells with the previous snapshot; the terminal reveal is intentionally a full-board update.
 
-| State | What the UI receives |
+| State | What the engine snapshot exposes |
 | --- | --- |
 | Covered floor, mine, or key | `tile = null`, no clue counts, optional reminder flag. |
 | Visited safe cell | Actual tile plus static adjacent mine/key counts. |
@@ -236,15 +376,17 @@ Only accepted moves, including a first mine hit, increase the move count. A key 
 
 ## Data and level format
 
-The repository chooses one of the bundled files in [`app/src/main/assets`](app/src/main/assets/): `easyLevelDetail.json` (10×10), `mediumLevelDetail.json` (15×15), or `hardLevelDetail.json` (20×20). `ConfigManager` reads the file; Gson parses internal JSON DTOs; `SimpleGameRepository` maps those DTOs to `LevelDefinition` and validates them before session creation. JSON types do not cross into `core-game`.
+The [bundled assets](data/src/main/assets/) live in `data`, not `app`. `AssetLevelRepository` selects a file by difficulty, reads it with an injected reader function, parses internal Gson DTOs, and maps them into domain models. The small Android asset-reading function is in the same repository file; there is no separate `LevelAssetSource` abstraction.
 
-| Difficulty | Board | Blocks | Mines | Keys |
-| --- | --- | --- | --- | --- |
-| Easy | 10 × 10 | 15 | 5 | 5 |
-| Medium | 15 × 15 | 20 | 18 | 10 |
-| Hard | 20 × 20 | 50 | 58 | 10 |
+The repository checks required JSON fields during decoding. Gameplay constraints are validated when the domain session adapts the configuration and creates the engine; loading a catalogue summary is not a full playability check.
 
-A minimal level looks like this:
+| Difficulty | File | Board | Blocks | Mines | Keys |
+| --- | --- | --- | --- | --- | --- |
+| Easy | `easyLevelDetail.json` | 10 × 10 | 15 | 5 | 5 |
+| Medium | `mediumLevelDetail.json` | 15 × 15 | 20 | 18 | 10 |
+| Hard | `hardLevelDetail.json` | 20 × 20 | 50 | 58 | 10 |
+
+A minimal level:
 
 ```json
 {
@@ -258,53 +400,77 @@ A minimal level looks like this:
 }
 ```
 
-`x` maps to the **row** and `y` maps to the **column** in this project's JSON format. `type` must match a `TileKind` name: `START`, `EXIT`, `BLOCK`, `MINE`, `KEY`, or `STEP`. `count` is the total requested for that type; `positions` reserves some or all of those placements. Omitted positions are generated where applicable. `STEP` is the default fill tile; its declared count is not used to place additional random tiles, so do not treat it as an independently enforced board-size total.
+In this format, `x` means **row** and `y` means **column**. Types are `START`, `EXIT`, `BLOCK`, `MINE`, `KEY`, and `STEP`. `count` is the total requested for a type, including explicit `positions`; remaining eligible placements are generated. `STEP` is the default fill tile, so its declared count does not place additional random floor cells.
 
-When editing a level, keep start/exit unique and explicitly positioned, avoid duplicate coordinates, and leave sufficient eligible space for requested blocks, mines, and keys. The repository test loads and generates all three bundled levels; extend that test when changing their format or constraints.
+Keep start/exit unique and explicitly positioned, avoid duplicate coordinates, and leave enough valid cells for blocks, mines, and safely reachable keys.
 
-## Compose layer and performance
+## Compose and performance
 
-`MainNavGraph` owns the two destinations. Selecting a difficulty asks the ViewModel to start a level, then navigates to the board. The board collects the ViewModel's `StateFlow<GameUiState>` and passes state and callbacks to `BoardGameScreen`. The screen handles `IDLE`/`LOADING`, `ERROR`, and `READY` explicitly. In `READY`, `GameStats` shows counters and lives, `Board` supports scrolling and cell selection, `MineSweeperCell` renders covered/revealed tiles with clue or flag overlays, and `MineSweeperControllers` emits `Direction` values. The finish dialog allows a full-board review for `WON` or `LOST`.
+`MainNavGraph` connects the level and game routes. Routes integrate lifecycle, Koin, and navigation; `LevelScreen` and `GameScreen` render state without those dependencies.
 
-Level file reads and JSON mapping run on an IO dispatcher. Board generation runs on `Dispatchers.Default`; the ViewModel publishes the result to `StateFlow` when ready. Movement is applied to the already-created session, not by reloading the asset or regenerating a board for each tap. Rejected moves do not emit a new UI state. The snapshot's row sharing further limits allocations during accepted moves. Compose remains a renderer of state, not the owner of the game rules.
+`GameScreen` combines `GameStats`, a scrollable `GameBoard`, `GameCell`, `MovementControls`, and the finish/review UI. The board has a minimum cell size of 32 dp and scrolls when necessary. Movement arrows are 36 dp inside 48 dp touch targets, leaving more vertical room for the board.
 
-The active session is held by `MainViewModel` in memory. There is currently no saved-game persistence or restoration after process death; a fresh level selection starts a new session.
+### Why ordinary taps do not reload a level
 
-### UI responsibilities
+Only a new game, restart, or load retry performs loading/generation. Selecting a covered cell updates presentation state; movement and flags reuse the existing engine.
 
-| Component | Owns | Does not own |
-| --- | --- | --- |
-| `MainNavGraph` | Destination changes, state collection, callback wiring. | Game rules or level parsing. |
-| `BoardGameScreen` | Loading/error/ready layouts, selected cell, review-dialog visibility. | The authoritative game session. |
-| `Board` / `MineSweeperCell` | Cell layout, scrolling, visible tile/clue/reminder rendering, accessibility descriptions. | Hidden tile contents or reachability decisions. |
-| `MineSweeperControllers` | Compact direction buttons; 36 dp visible arrows within 48 dp touch targets. | Validating moves. |
-| `core-compose` | Reusable theme and UI primitives. | Feature-specific state or game logic. |
+Accepted actions create new snapshots while sharing unchanged rows/cells. Both the domain mapper and `GamePresentationMapper` preserve that sharing. No-op engine actions reuse the existing snapshot and do not replace the published UI state. Exit unlock and terminal reveal can require wider visual updates.
 
-The board retains a minimum cell size and scrolls when necessary, rather than shrinking large levels into unreadable cells. The single-row movement controls leave more vertical space for the board.
+Compose recomposition is not the same as JSON loading or board generation. Structural sharing reduces allocation but does not guarantee that every unchanged Composable is skipped; assess remaining performance issues with frame timing and recomposition measurements.
 
-### Why taps should not reload a screen
+### Current limitations
 
-Normal movement and flag actions reuse the existing session. Only selecting a difficulty, retrying a failed load, or choosing **Try again** runs the load/generation path. Updated state may cause Compose to recompose; that is different from re-reading JSON or rebuilding the game. Unchanged snapshot rows/cells are shared to reduce allocation, but this is not a guarantee that Compose skips every unchanged cell—measure recomposition and frame timing when assessing UI performance.
+- No nickname flow, authentication, leaderboard, result history, database, or remote service.
+- The active game is in memory. ViewModels survive configuration changes, but a recreated process starts a new game from the restored difficulty argument rather than restoring the previous board.
+- More lives are supported by the engine and domain coordinator, but production DI currently uses one life and there is no lives-setting UI.
+- A safely reachable board is not guaranteed to be solvable from clues without guessing.
 
-### Current scope and extension points
-
-There is no nickname flow, results history, leaderboard, remote service, or authentication. More lives can be enabled through `GameSession.create(..., startingLives = n)` without changing the move contract. Persistence or results tracking would need a separate local data boundary; they should not become responsibilities of the Composables or board generator.
+Future auth, leaderboard, or persistence features should introduce capability-specific contracts/use cases in `domain` and implementations in `data`. They do not belong in the reusable engine or in a growing game repository.
 
 ## Tests and contributor workflow
 
-Run the relevant JVM suites with:
+Run all four module JVM suites from the repository root:
 
 ```bash
-./gradlew :core-game:test :app:testDebugUnitTest
+./gradlew :core-game:test :domain:test \
+  :data:testDebugUnitTest :app:testDebugUnitTest
 ```
 
-[`GameSessionTest`](core-game/src/test/kotlin/com/mohdroid/game/domain/GameSessionTest.kt) covers level rejection, seeded generation, safe key routes, hidden snapshots, eight-neighbor clues, flags, lives, mine hits, locked exits, boundary moves, victory, snapshot reuse, and structural sharing. [`SimpleGameRepositoryTest`](app/src/test/java/com/mohdroid/minesweeper/main/repository/SimpleGameRepositoryTest.kt) covers JSON mapping, read failures, and multiple seeds for every bundled difficulty. These are JVM unit tests; they do not require a running emulator. For UI changes, also run the app on an emulator/device and exercise each difficulty and the win/loss/retry flow.
+No emulator is required for these tests.
 
-When changing the project, keep these ownership rules:
+| Suite | Coverage |
+| --- | --- |
+| [Engine tests](core-game/src/test/kotlin/com/mohdroid/game/domain/engine/GameEngineTest.kt) | Validation, seeded generation, safe key routes, clues, flags, lives, victory, hidden snapshots, structural sharing. |
+| [Domain tests](domain/src/test/kotlin/com/mohdroid/domain/game/) | Use-case/session coordination, catalogue ordering, retry, cancellation, stale starts, isolation, and architecture boundaries. |
+| [Data tests](data/src/test/java/com/mohdroid/data/game/AssetLevelRepositoryTest.kt) | JSON mapping, asset selection, catalogue metadata, source failures/cancellation, and playable bundled levels through public domain contracts. |
+| [Feature tests](app/src/test/java/com/mohdroid/minesweeper/feature/) | Both ViewModels, pure reducers, presentation/action mapping, errors, navigation acknowledgement, repeated taps, restart, exit, and cleanup. |
+| [Lifecycle tests](app/src/test/java/com/mohdroid/minesweeper/ui/lifecycle/LifecycleCollectionTest.kt) | Start/stop collection, latest-state delivery, resumed-only navigation, background retention, acknowledgement, and observer cleanup. |
 
-- Put placement and movement rules in `core-game`, with a focused JVM test.
-- Keep Android asset I/O and JSON mapping in `app`'s repository; pass domain models into `GameSession`.
-- Expose screen-ready state through `MainViewModel`; make Composables render state and send actions back.
-- Put only genuinely reusable Compose styling/components in `core-compose`; keep game-specific cells and controls in `app`.
+HTML reports are generated under each module's `build/reports/tests/` directory. JVM tests do not replace emulator/device checks for actual layout, rendering, and touch behavior.
 
-The main build versions are centralized in [`gradle-script/dependencies.gradle`](gradle-script/dependencies.gradle). This project currently uses Kotlin 1.5.21, Android Gradle Plugin 7.0.3, and Jetpack Compose 1.1.0-alpha01, so check compatibility before upgrading any one of them independently.
+### Contributor checklist
+
+- Put generation and gameplay rules in `core-game`, with focused JVM tests.
+- Put application orchestration and source-independent contracts in `domain`; keep engine adapters internal.
+- Keep JSON DTOs and Android asset I/O in `data`.
+- Add UI behavior to the appropriate feature's intents, changes, reducer, ViewModel, and presentation models. Reducers remain pure.
+- Keep navigation in routes, use the acknowledged-request policy, and collect with the destination lifecycle.
+- Preserve row/cell sharing and stale-load guards when changing mapping or loading.
+- Keep feature-specific UI in `app`; share genuinely reusable visuals through `core-compose`.
+- Keep Koin wiring in `di` packages, and do not add Koin to `core-game`.
+- Update documentation and tests when changing rules, contracts, package names, or assets.
+
+### Toolchain
+
+Versions are declared in [dependencies.gradle](gradle-script/dependencies.gradle) and the [Gradle wrapper configuration](gradle/wrapper/gradle-wrapper.properties).
+
+| Component | Repository version |
+| --- | --- |
+| Kotlin | 1.5.21 |
+| Gradle / Android Gradle Plugin | 7.0.2 / 7.0.3 |
+| Jetpack Compose | 1.1.0-alpha01 |
+| Navigation Compose | 2.4.0-alpha06 |
+| Koin | 3.1.2 |
+| Coroutines | 1.5.0 |
+
+These are the project's pinned versions, not a recommendation to start a new app on this stack. Check compatibility before upgrading individual libraries.

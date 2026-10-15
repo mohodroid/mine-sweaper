@@ -1,2 +1,3 @@
 include ':app',':core-compose'
 include ':core-game'
+include ':domain', ':data'
